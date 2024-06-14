@@ -66,7 +66,7 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         use_native=True,
         use_cg=True,
         iterations=15,
-        calculate_training_loss=False,
+        calculate_training_loss=True,
         num_threads=0,
         random_state=None,
     ):
