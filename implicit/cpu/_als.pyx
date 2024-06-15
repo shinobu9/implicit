@@ -276,10 +276,7 @@ def calculate_auc_loss(actual, user_factors, item_factors):
     import matplotlib.pyplot as plt
 
     predicted_ratings = user_factors.dot(item_factors.T).flatten()
-    print(predicted_ratings)
     actual_ratings = actual.toarray().flatten()
-    print(actual_ratings)
-
 
     fpr, tpr, _ = roc_curve(actual_ratings, predicted_ratings)
     roc_auc = roc_auc_score(actual_ratings, predicted_ratings)

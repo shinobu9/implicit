@@ -188,6 +188,7 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
 
                     if not show_progress:
                         log.info("loss %.4f", loss)
+                    print(f"loss : {loss}")
 
                 # Backward compatibility
                 if not callback:

@@ -39,33 +39,23 @@ def test_calculate_loss_simple(use_gpu):
         print("cpu loss")
         calculate_loss = implicit.cpu.als.calculate_loss
 
-    # Ciu = random(
-    #     m=100,
-    #     n=100,
-    #     density=0.05,
-    #     format="coo",
+    generate_dataset(path="/home/kamenskaya-el/adaptive-als/ml-100k", variant="100k", num_test_ratings=10)
+    titles, ratings = get_movielens(variant="100k", split="train")
+    ratings.data[ratings.data < 4.0] = 0
+    ratings.eliminate_zeros()
+    ratings.data = np.ones(len(ratings.data))
+    user_ratings = ratings.T.tocsr()
+
+    # counts = csr_matrix(
+    #     [
+    #         [1, 1, 0, 0, 0, 0],
+    #         [1, 0, 0, 0, 0, 0],
+    #         [1, 0, 0, 1, 0, 1],
+    #         [0, 0, 0, 0, 0, 1],
+    #     ],
     #     dtype=np.float32,
-    #     random_state=42,
-    #     data_rvs=None,
-    # ).T.tocsr()
-
-    # generate_dataset(path="/home/kamenskaya-el/adaptive-als/ml-100k", variant="100k", num_test_ratings=19)
-    # titles, ratings = get_movielens(variant="100k", split="train")
-    # ratings.data[ratings.data < 4.0] = 0
-    # ratings.eliminate_zeros()
-    # ratings.data = np.ones(len(ratings.data))
-    # user_ratings = ratings.T.tocsr()
-
-    counts = csr_matrix(
-        [
-            [1, 1, 0, 0, 0, 0],
-            [1, 0, 0, 0, 0, 0],
-            [1, 0, 0, 1, 0, 1],
-            [0, 0, 0, 0, 0, 1],
-        ],
-        dtype=np.float32,
-    )
-    user_ratings = counts.T.tocsr()
+    # )
+    # user_ratings = counts.T.tocsr()
 
 
     model = AlternatingLeastSquares(
@@ -84,29 +74,16 @@ def test_calculate_loss_simple(use_gpu):
 
     item_factors, user_factors = model.item_factors, model.user_factors
 
-    # titles, ratings = get_movielens(variant="100k", split="test")
-    # ratings.data[ratings.data < 4.0] = 0
-    # ratings.eliminate_zeros()
-    # ratings.data = np.ones(len(ratings.data))
-    # user_ratings = ratings.T.tocsr()
+    _, ratings = get_movielens(variant="100k", split="test")
+    ratings.data[ratings.data < 4.0] = 0
+    ratings.eliminate_zeros()
+    ratings.data = np.ones(len(ratings.data))
+    user_ratings_test = ratings.T.tocsr()
 
-    counts = csr_matrix(
-        [
-            [0, 0, 0, 1, 0, 0],
-            [0, 0, 0, 0, 0, 0],
-            [0, 0, 1, 0, 0, 0],
-            [0, 1, 0, 0, 0, 0],
-        ],
-        dtype=np.float32,
-    )
-    user_ratings_test = counts.T.tocsr()
-
-    # loss, rmse, auc = calculate_loss(user_ratings, user_factors, item_factors, regularization=10)
-    print(implicit.cpu._als.calculate_auc_loss(user_ratings+user_ratings_test, user_factors, item_factors))
-    # print(calculate_loss(user_ratings+user_ratings_test, user_factors, item_factors, regularization=10))
-    # print(loss)
-    # print(rmse)
-    # print(auc)
+    print(f"AUC: {implicit.cpu._als.calculate_auc_loss(user_ratings+user_ratings_test, user_factors, item_factors)}")
+    print(f"RMSE: {implicit.cpu._als.calculate_rmse_loss(user_ratings_test, user_factors, item_factors)}")
+    print(f"Model cost function (with reg): {calculate_loss(user_ratings+user_ratings_test, user_factors, item_factors, regularization=10)}")
+    print(f"Model cost function (with reg): {calculate_loss(user_ratings_test, user_factors, item_factors, regularization=10)}")
 
 
 
