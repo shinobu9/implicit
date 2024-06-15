@@ -22,7 +22,7 @@ import tqdm
 
 from implicit.als import AlternatingLeastSquares
 from implicit.bpr import BayesianPersonalizedRanking
-from implicit.datasets.movielens import get_movielens
+from implicit.datasets.movielens import get_movielens, generate_dataset
 from implicit.lmf import LogisticMatrixFactorization
 from implicit.nearest_neighbours import (
     BM25Recommender,
@@ -34,10 +34,12 @@ from implicit.nearest_neighbours import (
 log = logging.getLogger("implicit")
 
 
-def calculate_similar_movies(output_filename, model_name="als", min_rating=4.0, variant="20m"):
+def calculate_similar_movies(output_filename, model_name="als", min_rating=4.0, variant="100k"):
     # read in the input data file
     start = time.time()
-    titles, ratings = get_movielens(variant)
+    # generate_dataset(path="/home/kamenskaya-el/adaptive-als/ml-20m", variant=variant)
+
+    titles, ratings = get_movielens(variant=variant, split="train")
 
     # remove things < min_rating, and convert to implicit dataset
     # by considering ratings as a binary preference only
@@ -126,7 +128,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--variant",
         type=str,
-        default="20m",
+        default="100k",
         dest="variant",
         help="Whether to use the 20m, 10m, 1m or 100k movielens dataset",
     )
