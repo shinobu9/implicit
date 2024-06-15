@@ -200,6 +200,7 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
 
         self._check_fit_errors()
 
+
     def recalculate_user(self, userid, user_items):
         """Recalculates factors for a batch of users
 

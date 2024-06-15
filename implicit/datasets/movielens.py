@@ -14,37 +14,6 @@ URL_BASE = "https://github.com/benfred/recommender_data/releases/download/v1.0/"
 # URL_BASE = "https://github.com/shinobu9/implicit/blob/80e2193a4cb953ae776972b38cb38cf1153ed262/"
 
 
-# def get_movielens(variant="100k"):
-#     """Gets movielens datasets
-
-#     Parameters
-#     ---------
-#     variant : string
-#         Which version of the movielens dataset to download. Should be one of '20m', '10m',
-#         '1m' or '100k'.
-
-#     Returns
-#     -------
-#     movies : ndarray
-#         An array of the movie titles.
-#     ratings : csr_matrix
-#         A sparse matrix where the row is the movieId, the column is the userId and the value is
-#         the rating.
-#     """
-#     filename = f"movielens_{variant}_train.hdf5"
-
-#     path = os.path.join(_download.LOCAL_CACHE_DIR, filename)
-#     if not os.path.isfile(path):
-#         log.info("Downloading dataset to '%s'", path)
-#         _download.download_file(URL_BASE + filename, path)
-#     else:
-#         log.info("Using cached dataset at '%s'", path)
-
-#     with h5py.File(path, "r") as f:
-#         m = f.get("movie_user_ratings")
-#         plays = csr_matrix((m.get("data"), m.get("indices"), m.get("indptr")))
-#         return np.array(f["movie"].asstr()[:]), plays
-
 def get_movielens(path="~/adaptive-als/implicit_datasets/", variant="100k", split="train"):
     import pandas
 
@@ -68,15 +37,15 @@ def get_movielens(path="~/adaptive-als/implicit_datasets/", variant="100k", spli
 
 
 
-def generate_dataset(path, variant="100k", outputpath="~/adaptive-als/implicit_datasets/", split=0.9):
+def generate_dataset(path, variant="100k", num_test_ratings=10, outputpath="~/adaptive-als/implicit_datasets/"):
     if variant == "20m":
-        ratings, movies = _read_dataframes_20M(path)
+        ratings, _ = _read_dataframes_20M(path)
     elif variant == "100k":
-        ratings, movies = _read_dataframes_100k(path)
+        ratings, _ = _read_dataframes_100k(path)
     else:
-        ratings, movies = _read_dataframes(path)
+        ratings, _ = _read_dataframes(path)
 
-    _csv_from_dataframe_split(ratings, variant, split, outputpath)
+    split_and_save_csv(ratings, variant, num_test_ratings, outputpath)
 
 
 def _read_dataframes_20M(path):
@@ -144,19 +113,33 @@ def _hfd5_from_dataframe(ratings, movies, outputfilename):
         dset[:] = titles
 
 
-def _csv_from_dataframe_split(ratings, variant, split, outputpath):
-    ratings = ratings.sort_values(by='timestamp')
-    split_index = int(split * len(ratings))
-    ratings_train = ratings.iloc[:split_index]
-    ratings_test = ratings.iloc[split_index:]
+def split_and_save_csv(ratings, variant, num_test_ratings, outputpath):
+    import pandas
+
+    assert num_test_ratings < 20, "num_test_ratings must be less than 20, not all users have enough ratings"
+
+    test_ratings = ratings.groupby('userId', group_keys=False).apply(lambda x: x.sort_values('timestamp').tail(num_test_ratings))
+
+    ratings_train = ratings.copy()
+    ratings_train.loc[ratings_train.index.isin(test_ratings.index), 'rating'] = 0
+
+    ratings_test = ratings.copy()
+    ratings_test.loc[~ratings_test.index.isin(test_ratings.index), 'rating'] = 0
+
     ratings_train = ratings_train.sample(frac=1, random_state=42).reset_index(drop=True)
     ratings_test = ratings_test.sample(frac=1, random_state=42).reset_index(drop=True)
 
-    ratings_train.to_csv(os.path.join(outputpath, f"movielens_{variant}_train.csv"))
+    ratings_train.to_csv(os.path.join(outputpath, f"movielens_{variant}_train.csv"), index=False)
     print(f'Saved train data to {os.path.join(outputpath, f"movielens_{variant}_train.csv")}')
+    print(f'Num items {len(ratings_train["movieId"].unique())}')
+    print(f'Num users {len(ratings_train["userId"].unique())}')
+    print(f"Num non null ratings {len(ratings_train[ratings_train['rating'] != 0])}")
 
-    ratings_test.to_csv(os.path.join(outputpath, f"movielens_{variant}_test.csv"))
+    ratings_test.to_csv(os.path.join(outputpath, f"movielens_{variant}_test.csv"), index=False)
     print(f'Saved test data to {os.path.join(outputpath, f"movielens_{variant}_test.csv")}')
+    print(f'Num items {len(ratings_test["movieId"].unique())}')
+    print(f'Num users {len(ratings_test["userId"].unique())}')
+    print(f"Num non null ratings {len(ratings_test[ratings_test['rating'] != 0])}")
 
 
 def _csr_from_dataframe(ratings, movies):

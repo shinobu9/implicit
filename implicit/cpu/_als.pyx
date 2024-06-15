@@ -2,6 +2,7 @@
 
 import cython
 import numpy as np
+import os
 
 from cython cimport floating, integral
 
@@ -252,6 +253,48 @@ def calculate_loss(Cui, X, Y, regularization, num_threads=0):
     """ Calculates the loss for an ALS model """
     return _calculate_loss(Cui, Cui.indptr, Cui.indices, Cui.data.astype('float32'),
                            X, Y, regularization, num_threads)
+
+
+def calculate_rmse_loss(actual, user_factors, item_factors):
+    """ Calculates the RMSE loss for an ALS model """
+
+    predicted_ratings = user_factors.dot(item_factors.T)
+    actual = actual.toarray()
+
+    pred = predicted_ratings[actual.nonzero()].flatten()
+    actual = actual[actual.nonzero()].flatten()
+
+    squared_errors = np.square(actual - pred)
+    rmse_loss = np.sqrt(np.sum(squared_errors) / len(actual))
+    
+    return rmse_loss
+
+
+def calculate_auc_loss(actual, user_factors, item_factors):
+    """ Calculates the AUC loss for an ALS model """
+    from sklearn.metrics import roc_curve, roc_auc_score
+    import matplotlib.pyplot as plt
+
+    predicted_ratings = user_factors.dot(item_factors.T).flatten()
+    print(predicted_ratings)
+    actual_ratings = actual.toarray().flatten()
+    print(actual_ratings)
+
+
+    fpr, tpr, _ = roc_curve(actual_ratings, predicted_ratings)
+    roc_auc = roc_auc_score(actual_ratings, predicted_ratings)
+
+    plt.figure(figsize=(8, 6))
+    plt.plot(fpr, tpr, color='blue', lw=2, label='ROC curve (AUC = %0.2f)' % roc_auc)
+    plt.plot([0, 1], [0, 1], color='gray', lw=1, linestyle='--')
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    # plt.title('ROC AUC Curve')
+    plt.legend(loc="lower right")
+    plt.grid(True)
+
+    plt.savefig('./111plots/roc_auc.png')
+    return roc_auc
 
 
 @cython.cdivision(True)
