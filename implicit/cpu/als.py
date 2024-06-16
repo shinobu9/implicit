@@ -98,14 +98,15 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         # cache for user factors squared
         self._XtX = None
 
-        # user adaptive embedding parameters
+        # adaptive embedding parameters
         self._du = None
-        # item adaptive embedding parameters
         self._di = None
+        self._A = None
+        self._B = None
 
         check_blas_config()
 
-    def fit(self, user_items, show_progress=True, callback=None, gamma=0.2, xavier_init=None, zero_padding=True, min_embedding=1):
+    def fit(self, user_items, show_progress=True, callback=None, gamma=0.2, xavier_init=None, zero_padding=True, min_embedding=1, projections=True):
         """Factorizes the user_items matrix.
 
         After calling this method, the members 'user_factors' and 'item_factors' will be
@@ -140,6 +141,8 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
             Whether to pad adaptive embeddings with zeroes
         min_embedding: int, optional
             Minimal embedding size when training with adaptive embeddings
+        projections: bool, optional
+            Whether to project adaptive embeddings onto common space
         """
         # initialize the random state
         random_state = check_random_state(self.random_state)
@@ -164,19 +167,19 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
             if xavier_init is None:
                 self.user_factors = random_state.random((users, self.factors), dtype=self.dtype) * 0.01
             elif xavier_init == "normal":
-                self.user_factors = random_state.normal(loc=0, scale=np.sqrt(2/(self.factors+items)), size=(users, self.factors)).astype(np.float32)
+                self.user_factors = random_state.normal(loc=0, scale=np.sqrt(2/(self.factors+items)), size=(users, self.factors)).astype(self.dtype)
             elif xavier_init == "uniform":
                 scale = np.sqrt(6/(self.factors+items))
-                self.user_factors = random_state.uniform(low=-scale, high=scale, size=(users, self.factors)).astype(np.float32)
+                self.user_factors = random_state.uniform(low=-scale, high=scale, size=(users, self.factors)).astype(self.dtype)
 
         if self.item_factors is None:
             if xavier_init is None:
                 self.item_factors = random_state.random((items, self.factors), dtype=self.dtype) * 0.01
             elif xavier_init == "normal":
-                self.item_factors = random_state.normal(loc=0, scale=np.sqrt(2/(self.factors+users)), size=(items, self.factors)).astype(np.float32)
+                self.item_factors = random_state.normal(loc=0, scale=np.sqrt(2/(self.factors+users)), size=(items, self.factors)).astype(self.dtype)
             elif xavier_init == "uniform":
                 scale = np.sqrt(6/(self.factors+users))
-                self.item_factors = random_state.uniform(low=-scale, high=scale, size=(items, self.factors)).astype(np.float32)
+                self.item_factors = random_state.uniform(low=-scale, high=scale, size=(items, self.factors)).astype(self.dtype)
 
         log.debug("Initialized factors in %s", time.time() - s)
 
@@ -205,6 +208,31 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
 
             print(f"Small user embedding after padding: {sum(self._du<self.factors)}/{len(self._du)}")
             print(f"Small item embedding after padding: {sum(self._di<self.factors)}/{len(self._di)}")
+
+            if projections:
+                self._A = []
+                self._B = []
+                if xavier_init == "uniform":
+                    for i in range(self.factors):
+                        scale = np.sqrt(6/(self.factors+i))
+                        A = random_state.uniform(low=-scale, high=scale, size=(self.factors, self.factors)).astype(self.dtype)
+                        A[:, i:] = 0
+                        self._A.append(A)
+                elif xavier_init == "normal":
+                    for i in range(self.factors):
+                        A = random_state.normal(loc=0, scale=np.sqrt(2/(self.factors+i)), size=(self.factors, self.factors, self.factors)).astype(self.dtype)
+                        A[:, i:] = 0
+                        self._A.append(A)
+                elif xavier_init is None:
+                    for i in range(self.factors):
+                        A = random_state.random((self.factors, self.factors), dtype=self.dtype) * 0.01
+                        A[:, i:] = 0
+                        self._A.append(A)
+                self._A.append(np.eye(self.factors, self.factors))
+                self._A = np.array(self._A)
+                self._B = self._A.copy()
+
+
         
 # --------------------------------------------------------------------------------------------------
         # invalidate cached norms and squared factors
@@ -546,6 +574,9 @@ def pad_with_zeroes(X, d_u, d, min_d):
     for u in range(X.shape[0]):
         X[u, d_u[u]:] = 0.0
 
+def pad_with_zeroes_matrix(_A):
+    for u in range(_A.shape[0]):
+        _A[u, :, u:] = 0
 
 def least_squares(Cui, X, Y, regularization, num_threads=0):
     """For each user in Cui, calculate factors Xu for them

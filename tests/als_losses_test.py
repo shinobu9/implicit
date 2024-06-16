@@ -40,11 +40,11 @@ def test_calculate_loss_simple(use_gpu):
     # ratings.data[ratings.data >= 4.0] = 1
     # ratings.data[(ratings.data < 4.0)&(ratings.data > 2.0)] = 0
     ratings.eliminate_zeros()
-    ratings.data = np.ones(len(ratings.data))
+    # ratings.data = np.ones(len(ratings.data))
     user_ratings = ratings.T.tocsr()
 
     model = AlternatingLeastSquares(
-        factors=40,
+        factors=50,
         regularization=0.1,
         iterations=30,
         dtype=np.float32,
@@ -66,7 +66,7 @@ def test_calculate_loss_simple(use_gpu):
     # ratings.data[ratings.data >= 4.0] = 1
     # ratings.data[(ratings.data < 4.0)&(ratings.data > 2.0)] = 0
     ratings.eliminate_zeros()
-    ratings.data = np.ones(len(ratings.data))
+    # ratings.data = np.ones(len(ratings.data))
     user_ratings_test = ratings.T.tocsr()
 
     # counts = csr_matrix(
