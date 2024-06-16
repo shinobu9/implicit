@@ -255,20 +255,6 @@ def calculate_loss(Cui, X, Y, regularization, num_threads=0):
                            X, Y, regularization, num_threads)
 
 
-#def calculate_rmse_loss(actual, user_factors, item_factors):
-#    """ Calculates the RMSE loss for an ALS model """
-#
-#    predicted_ratings = user_factors.dot(item_factors.T)
-#    actual = actual.toarray()
-
-#   pred = predicted_ratings[actual.nonzero()].flatten()
-#    actual = actual[actual.nonzero()].flatten()
-
-#    squared_errors = np.square(actual - pred)
-#    rmse_loss = np.sqrt(np.sum(squared_errors) / len(actual))
-
-#    return rmse_loss
-
 def calculate_rmse_loss(actual, user_factors, item_factors):
     """ Calculates the RMSE loss for an ALS model """
     

@@ -41,7 +41,7 @@ def get_movielens(variant="100k", path="~/adaptive-als/implicit_datasets/", spli
 
 
 
-def generate_dataset(variant="100k", num_test_ratings=10, eval_percent=0.0, path="/home/kamenskaya-el/adaptive-als/", outputpath="~/adaptive-als/implicit_datasets/"):
+def generate_dataset(variant="100k", num_test_ratings=10, eval_percent=0.0, min_rating=4.0, path="/home/kamenskaya-el/adaptive-als/", outputpath="~/adaptive-als/implicit_datasets/"):
     """
         Generates train, test and eval from files as path and saves csv files to outpath
     """
@@ -54,7 +54,7 @@ def generate_dataset(variant="100k", num_test_ratings=10, eval_percent=0.0, path
     else:
         raise ValueError("Variant must be 100k, 20m or 25m")
 
-    split_and_save_csv(ratings, variant, num_test_ratings, outputpath, eval_percent)
+    split_and_save_csv(ratings, variant, num_test_ratings, outputpath, eval_percent, min_rating)
 
 
 def _read_dataframes_100k(path):
@@ -101,16 +101,31 @@ def _read_dataframes(path):
     return ratings, movies
 
 
-def split_and_save_csv(ratings, variant, num_test_ratings, outputpath, eval_percent = 0.0):
+def split_and_save_csv(ratings, variant, num_test_ratings, outputpath, eval_percent = 0.0, min_rating=4.0):
     """
         Splits ratings dataset into train and test with num_test_ratings latest ratings taken from
         each userId in ratings and saved into test dataset and the rest saved into train
     """
 
     assert num_test_ratings < 20, "num_test_ratings must be less than 20, not all users have enough ratings"
-    
+
+    # mapping movieIds
     mapping_dict = {movie_id: idx + 1 for idx, movie_id in enumerate(ratings['movieId'].unique())}
     ratings['movieId'] = ratings['movieId'].map(mapping_dict)
+
+    # binarizing ratings
+    # ratings['rating'] = np.where(ratings['rating'] < min_rating, 0, 1)
+    ratings['rating'] = np.where(ratings['rating'] <= 2.0, -1, ratings['rating'])
+    ratings['rating'] = np.where((ratings['rating'] > 2.0)&(ratings['rating'] < 4.0), 0, ratings['rating'])
+    ratings['rating'] = np.where(ratings['rating'] >= 4.0, 1, ratings['rating'])
+    # dropping userIds with only zeroes
+    grouped = ratings.groupby('userId')
+    mask = grouped['rating'].transform('any') != 0
+    ratings = ratings[mask]
+    # dropping userIds with only zeroes
+    grouped = ratings.groupby('movieId')
+    mask = grouped['rating'].transform('any') != 0
+    ratings = ratings[mask]
 
     test_ratings = ratings.groupby('userId', group_keys=False).apply(lambda x: x.sort_values('timestamp').tail(num_test_ratings))
 

@@ -33,39 +33,20 @@ if HAS_CUDA:
 
 
 def test_calculate_loss_simple(use_gpu):
-    if use_gpu:
-        print("gpu loss")
-        calculate_loss = implicit.gpu.als.calculate_loss
 
-    else:
-        print("cpu loss")
-        calculate_loss = implicit.cpu.als.calculate_loss
-
-    # generate_dataset(variant="20m", num_test_ratings=10, eval_percent=0.1, path="/home/kamenskaya-el/adaptive-als/", outputpath="~/adaptive-als/implicit_datasets/")
-    # titles, ratings = get_movielens(variant="20m", split="train")
-    # ratings.data[ratings.data <= 2.0] = -1
+    generate_dataset(variant="100k", num_test_ratings=10, eval_percent=0.1, min_rating=4.0, path="/home/kamenskaya-el/adaptive-als/", outputpath="~/adaptive-als/implicit_datasets/")
+    titles, ratings = get_movielens(variant="100k", split="train")
+    # ratings.data[ratings.data <= 2.0] = 0
     # ratings.data[ratings.data >= 4.0] = 1
     # ratings.data[(ratings.data < 4.0)&(ratings.data > 2.0)] = 0
-    # ratings.eliminate_zeros()
-    # ratings.data = np.ones(len(ratings.data))
-    # user_ratings = ratings.T.tocsr()
-
-    counts = csr_matrix(
-        [
-            [1, 1, 0, 1, 1, 1],
-            [1, 0, 0, 0, 0, 0],
-            [1, 0, 1, 1, 1, 1],
-            [0, 1, 1, 0, 0, 1],
-        ],
-        dtype=np.float32,
-    )
-    user_ratings = counts.T.tocsr()
-
+    ratings.eliminate_zeros()
+    ratings.data = np.ones(len(ratings.data))
+    user_ratings = ratings.T.tocsr()
 
     model = AlternatingLeastSquares(
-        factors=6,
-        regularization=10,
-        iterations=10,
+        factors=40,
+        regularization=0.1,
+        iterations=30,
         dtype=np.float32,
         random_state=23,
         use_native=True,
@@ -73,40 +54,34 @@ def test_calculate_loss_simple(use_gpu):
         use_gpu=use_gpu,
         calculate_training_loss=True,
         alpha=40,
-        gamma=0.02,
     )
 
-    model.fit(user_ratings, show_progress=True)
+    model.fit(user_ratings, show_progress=True,  xavier_init="uniform", gamma=0.02, zero_padding=True, min_embedding=2)
 
     item_factors, user_factors = model.item_factors, model.user_factors
     print(f"Ratings {user_ratings.shape} | User factors {user_factors.shape} | Item factors {item_factors.shape}")
 
-    # _, ratings = get_movielens(variant="20m", split="test")
-    # ratings.data[ratings.data <= 2.0] = -1
+    _, ratings = get_movielens(variant="100k", split="test")
+    # ratings.data[ratings.data <= 2.0] = 0
     # ratings.data[ratings.data >= 4.0] = 1
     # ratings.data[(ratings.data < 4.0)&(ratings.data > 2.0)] = 0
-    # ratings.eliminate_zeros()
-    # ratings.data = np.ones(len(ratings.data))
-    # user_ratings_test = ratings.T.tocsr()
+    ratings.eliminate_zeros()
+    ratings.data = np.ones(len(ratings.data))
+    user_ratings_test = ratings.T.tocsr()
 
-    counts = csr_matrix(
-        [
-            [1, 1, 0, 1, 1, 1],
-            [1, 0, 0, 1, 0, 1],
-            [1, 1, 1, 1, 1, 1],
-            [0, 1, 1, 0, 1, 1],
-        ],
-        dtype=np.float32,
-    )
-    user_ratings_test = counts.T.tocsr()
+    # counts = csr_matrix(
+    #     [
+    #         [4, 1, 0, 2, 5, 3],
+    #         [2, 0, 3, 0, 1, 0],
+    #         [1, 0, 4, 0, 3, 2],
+    #         [0, 5, 0, 4, 0, 5],
+    #     ],
+    #     dtype=np.float32,
+    # )
+    # user_ratings_test = counts.T.tocsr()
 
-    print(f"USER FACTORS NOW: {user_factors}\nITEM FACTORS NOW: {item_factors}")
-
-    print(f"AUC: {implicit.cpu._als.calculate_auc_loss(user_ratings_test, user_factors, item_factors)}")
+    # print(f"AUC: {implicit.cpu._als.calculate_auc_loss(user_ratings_test, user_factors, item_factors)}")
     print(f"RMSE: {implicit.cpu._als.calculate_rmse_loss(user_ratings_test, user_factors, item_factors)}")
-    # print(f"Model cost function train+test (with reg): {calculate_loss(user_ratings+user_ratings_test, user_factors, item_factors, regularization=10)}")
-    # print(f"Model cost function test (with reg): {calculate_loss(user_ratings_test, user_factors, item_factors, regularization=10)}")
-
 
 
 if __name__ == "__main__":

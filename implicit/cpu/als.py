@@ -53,8 +53,6 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
     random_state : int, numpy.random.RandomState, np.random.Generator or None, optional
         The random state for seeding the initial item and user factors.
         Default is None.
-    gamma : float, optional
-        The gamma hyperparameter to scale the embedding size
 
     Attributes
     ----------
@@ -76,7 +74,6 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         calculate_training_loss=True,
         num_threads=0,
         random_state=None,
-        gamma=0.2,
     ):
         super().__init__(num_threads=num_threads)
 
@@ -84,7 +81,6 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         self.factors = factors
         self.regularization = regularization
         self.alpha = alpha
-        self.gamma = gamma
 
         # options on how to fit the model
         self.dtype = np.dtype(dtype)
@@ -95,6 +91,7 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         self.fit_callback = None
         self.cg_steps = 3
         self.random_state = random_state
+
 
         # cache for item factors squared
         self._YtY = None
@@ -108,7 +105,7 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
 
         check_blas_config()
 
-    def fit(self, user_items, show_progress=True, callback=None):
+    def fit(self, user_items, show_progress=True, callback=None, gamma=0.2, xavier_init=None, zero_padding=True, min_embedding=1):
         """Factorizes the user_items matrix.
 
         After calling this method, the members 'user_factors' and 'item_factors' will be
@@ -134,6 +131,15 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
             Whether to show a progress bar during fitting
         callback: Callable, optional
             Callable function on each epoch with such arguments as epoch, elapsed time and progress
+        gamma : float, optional
+            The hyperparameter to scale the embedding size
+        xavier_init: string, optional
+            Type of matrix initialization to use. If set to None uses default random initialization,
+            other options are "normal" and "uniform"
+        zero_padding: bool, optional
+            Whether to pad adaptive embeddings with zeroes
+        min_embedding: int, optional
+            Minimal embedding size when training with adaptive embeddings
         """
         # initialize the random state
         random_state = check_random_state(self.random_state)
@@ -155,37 +161,52 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         s = time.time()
         # Initialize the variables randomly if they haven't already been set
         if self.user_factors is None:
-            self.user_factors = random_state.random((users, self.factors), dtype=self.dtype) * 0.01
+            if xavier_init is None:
+                self.user_factors = random_state.random((users, self.factors), dtype=self.dtype) * 0.01
+            elif xavier_init == "normal":
+                self.user_factors = random_state.normal(loc=0, scale=np.sqrt(2/(self.factors+items)), size=(users, self.factors)).astype(np.float32)
+            elif xavier_init == "uniform":
+                scale = np.sqrt(6/(self.factors+items))
+                self.user_factors = random_state.uniform(low=-scale, high=scale, size=(users, self.factors)).astype(np.float32)
+
         if self.item_factors is None:
-            self.item_factors = random_state.random((items, self.factors), dtype=self.dtype) * 0.01
+            if xavier_init is None:
+                self.item_factors = random_state.random((items, self.factors), dtype=self.dtype) * 0.01
+            elif xavier_init == "normal":
+                self.item_factors = random_state.normal(loc=0, scale=np.sqrt(2/(self.factors+users)), size=(items, self.factors)).astype(np.float32)
+            elif xavier_init == "uniform":
+                scale = np.sqrt(6/(self.factors+users))
+                self.item_factors = random_state.uniform(low=-scale, high=scale, size=(items, self.factors)).astype(np.float32)
 
         log.debug("Initialized factors in %s", time.time() - s)
 
+# --------------------------------------------------------------------------------------------------
+        if zero_padding:
+            user_interactions = Ciu.getnnz(axis=0)
+            item_interactions = Ciu.getnnz(axis=1)
+            fu_med = np.median(user_interactions)
+            fi_med = np.median(item_interactions)
+            self._du = np.round(user_interactions / (gamma * fu_med)).astype(np.int32)
+            self._di = np.round(item_interactions / (gamma * fi_med)).astype(np.int32)
 
-        print(users, items)
-        # Separate by popularity bins
-        user_interactions = Ciu.getnnz(axis=0)
-        print(user_interactions)
-        item_interactions = Ciu.getnnz(axis=1)
-        print(item_interactions)
-        fu_med = np.median(user_interactions)
-        fi_med = np.median(item_interactions)
-        d_u = np.round(user_interactions / (self.gamma * fu_med)).astype(np.int32)
-        d_i = np.round(item_interactions / (self.gamma * fi_med)).astype(np.int32)
+            for u in range(users):
+                if self._du[u] < self.factors:
+                    if self._du[u] == 0: self._du[u] = min_embedding
+                    self.user_factors[u,self._du[u]:] = 0.0
+                else:
+                    self._du[u] = self.factors
 
-        for u in range(users):
-            if d_u[u] < self.factors:
-                if d_u[u] == 0: d_u[u] = 1
-                self.user_factors[u,d_u[u]:] = 0.0
+            for i in range(items):
+                if self._di[i] < self.factors:
+                    if self._di[i] == 0: self._di[i] = min_embedding
+                    self.item_factors[i,self._di[i]:] = 0.0
+                else:
+                    self._di[i] = self.factors
 
-        for i in range(items):
-            if d_i[i] < self.factors:
-                if d_i[i] == 0: d_i[i] = 1
-                self.item_factors[i,d_i[i]:] = 0.0
+            print(f"Small user embedding after padding: {sum(self._du<self.factors)}/{len(self._du)}")
+            print(f"Small item embedding after padding: {sum(self._di<self.factors)}/{len(self._di)}")
         
-        print(self.user_factors)
-        print(self.item_factors)
-
+# --------------------------------------------------------------------------------------------------
         # invalidate cached norms and squared factors
         self._item_norms = self._user_norms = None
         self._YtY = None
@@ -206,6 +227,8 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
                     self.regularization,
                     num_threads=self.num_threads,
                 )
+                if zero_padding:
+                    pad_with_zeroes(self.user_factors, self._du, self.factors, min_embedding)
                 solver(
                     Ciu,
                     self.item_factors,
@@ -213,6 +236,8 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
                     self.regularization,
                     num_threads=self.num_threads,
                 )
+                if zero_padding:
+                    pad_with_zeroes(self.item_factors, self._di, self.factors, min_embedding)
                 progress.update(1)
 
                 if self.calculate_training_loss:
@@ -279,7 +304,7 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
             num_threads=self.num_threads,
         )
         return user_factors[0] if np.isscalar(userid) else user_factors
-
+    
     def recalculate_item(self, itemid, item_users):
         """Recalculates factors for a batch of items
 
@@ -517,6 +542,11 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         np.savez(fileobj_or_path, **args)
 
 
+def pad_with_zeroes(X, d_u, d, min_d):
+    for u in range(X.shape[0]):
+        X[u, d_u[u]:] = 0.0
+
+
 def least_squares(Cui, X, Y, regularization, num_threads=0):
     """For each user in Cui, calculate factors Xu for them
     using least squares on Y.
@@ -529,6 +559,7 @@ def least_squares(Cui, X, Y, regularization, num_threads=0):
 
     for u in range(users):
         X[u] = user_factor(Y, YtY, Cui, u, regularization, n_factors)
+        # ------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
 def user_linear_equation(Y, YtY, Cui, u, regularization, n_factors):
@@ -559,10 +590,10 @@ def user_factor(Y, YtY, Cui, u, regularization, n_factors):
     return np.linalg.solve(A, b)
 
 
-def item_factor(X, XtX, Cui, u, regularization, n_factors):
-    # Yu = (XtCuX + regularization * I)^-1 (XtCuPu)
-    A, b = user_linear_equation(X, XtX, Cui, u, regularization, n_factors)
-    return np.linalg.solve(A, b)
+# def item_factor(X, XtX, Cui, u, regularization, n_factors):
+#     # Yu = (XtCuX + regularization * I)^-1 (XtCuPu)
+#     A, b = user_linear_equation(X, XtX, Cui, u, regularization, n_factors)
+#     return np.linalg.solve(A, b)
 
 
 def least_squares_cg(Cui, X, Y, regularization, num_threads=0, cg_steps=3):
