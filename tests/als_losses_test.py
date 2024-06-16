@@ -13,7 +13,9 @@ from implicit.als import AlternatingLeastSquares
 from implicit.gpu import HAS_CUDA
 from implicit.datasets.movielens import get_movielens, generate_dataset
 import implicit.cpu
+import logging
 
+log = logging.getLogger("implicit")
 
 if HAS_CUDA:
 
@@ -39,9 +41,11 @@ def test_calculate_loss_simple(use_gpu):
         print("cpu loss")
         calculate_loss = implicit.cpu.als.calculate_loss
 
-    generate_dataset(path="/home/kamenskaya-el/adaptive-als/ml-100k", variant="100k", num_test_ratings=10)
-    titles, ratings = get_movielens(variant="100k", split="train")
-    ratings.data[ratings.data < 4.0] = 0
+    # generate_dataset(variant="20m", num_test_ratings=10, eval_percent=0.1, path="/home/kamenskaya-el/adaptive-als/", outputpath="~/adaptive-als/implicit_datasets/")
+    titles, ratings = get_movielens(variant="20m", split="train")
+    ratings.data[ratings.data <= 2.0] = -1
+    ratings.data[ratings.data >= 4.0] = 1
+    ratings.data[(ratings.data < 4.0)&(ratings.data > 2.0)] = 0
     ratings.eliminate_zeros()
     ratings.data = np.ones(len(ratings.data))
     user_ratings = ratings.T.tocsr()
@@ -59,13 +63,13 @@ def test_calculate_loss_simple(use_gpu):
 
 
     model = AlternatingLeastSquares(
-        factors=4,
+        factors=6,
         regularization=10,
         iterations=10,
         dtype=np.float32,
         random_state=23,
-        use_native=False,
-        use_cg=False,
+        use_native=True,
+        use_cg=True,
         use_gpu=use_gpu,
         calculate_training_loss=True
     )
@@ -73,19 +77,23 @@ def test_calculate_loss_simple(use_gpu):
     model.fit(user_ratings, show_progress=True)
 
     item_factors, user_factors = model.item_factors, model.user_factors
+    print(f"Ratings {user_ratings.shape} | User factors {user_factors.shape} | Item factors {item_factors.shape}")
 
-    _, ratings = get_movielens(variant="100k", split="test")
-    ratings.data[ratings.data < 4.0] = 0
+    _, ratings = get_movielens(variant="20m", split="test")
+    ratings.data[ratings.data <= 2.0] = -1
+    ratings.data[ratings.data >= 4.0] = 1
+    ratings.data[(ratings.data < 4.0)&(ratings.data > 2.0)] = 0
     ratings.eliminate_zeros()
     ratings.data = np.ones(len(ratings.data))
     user_ratings_test = ratings.T.tocsr()
 
-    print(f"AUC: {implicit.cpu._als.calculate_auc_loss(user_ratings+user_ratings_test, user_factors, item_factors)}")
+    # print(f"AUC: {implicit.cpu._als.calculate_auc_loss(user_ratings+user_ratings_test, user_factors, item_factors)}")
     print(f"RMSE: {implicit.cpu._als.calculate_rmse_loss(user_ratings_test, user_factors, item_factors)}")
-    print(f"Model cost function (with reg): {calculate_loss(user_ratings+user_ratings_test, user_factors, item_factors, regularization=10)}")
-    print(f"Model cost function (with reg): {calculate_loss(user_ratings_test, user_factors, item_factors, regularization=10)}")
+    print(f"Model cost function train+test (with reg): {calculate_loss(user_ratings+user_ratings_test, user_factors, item_factors, regularization=10)}")
+    print(f"Model cost function test (with reg): {calculate_loss(user_ratings_test, user_factors, item_factors, regularization=10)}")
 
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
     test_calculate_loss_simple(False)

@@ -255,17 +255,42 @@ def calculate_loss(Cui, X, Y, regularization, num_threads=0):
                            X, Y, regularization, num_threads)
 
 
+#def calculate_rmse_loss(actual, user_factors, item_factors):
+#    """ Calculates the RMSE loss for an ALS model """
+#
+#    predicted_ratings = user_factors.dot(item_factors.T)
+#    actual = actual.toarray()
+
+#   pred = predicted_ratings[actual.nonzero()].flatten()
+#    actual = actual[actual.nonzero()].flatten()
+
+#    squared_errors = np.square(actual - pred)
+#    rmse_loss = np.sqrt(np.sum(squared_errors) / len(actual))
+
+#    return rmse_loss
+
 def calculate_rmse_loss(actual, user_factors, item_factors):
     """ Calculates the RMSE loss for an ALS model """
+    
+    num_users, num_items = actual.shape
+    rmse_loss = 0
+    num_ratings = 0
 
-    predicted_ratings = user_factors.dot(item_factors.T)
-    actual = actual.toarray()
+    for user_idx in range(num_users):
+        user_row = actual[user_idx]
+        rated_items_idx = user_row.nonzero()[1]
+        
+        if len(rated_items_idx) == 0:
+            continue
+        
+        user_pred = user_factors[user_idx, :].dot(item_factors[rated_items_idx, :].T)
+        user_actual = user_row.data
+        
+        squared_errors = np.square(user_pred - user_actual)
+        rmse_loss += np.sum(squared_errors)
+        num_ratings += len(rated_items_idx)
 
-    pred = predicted_ratings[actual.nonzero()].flatten()
-    actual = actual[actual.nonzero()].flatten()
-
-    squared_errors = np.square(actual - pred)
-    rmse_loss = np.sqrt(np.sum(squared_errors) / len(actual))
+    rmse_loss = np.sqrt(rmse_loss / num_ratings)
     
     return rmse_loss
 
@@ -282,7 +307,7 @@ def calculate_auc_loss(actual, user_factors, item_factors):
     roc_auc = roc_auc_score(actual_ratings, predicted_ratings)
 
     plt.figure(figsize=(8, 6))
-    plt.plot(fpr, tpr, color='blue', lw=2, label='ROC curve (AUC = %0.2f)' % roc_auc)
+    plt.plot(fpr, tpr, color='blue', lw=2, label='ROC curve (AUC = %0.4f)' % roc_auc)
     plt.plot([0, 1], [0, 1], color='gray', lw=1, linestyle='--')
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')

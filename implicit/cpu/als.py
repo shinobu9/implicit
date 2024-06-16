@@ -14,6 +14,11 @@ from . import _als
 from .matrix_factorization_base import MatrixFactorizationBase
 
 log = logging.getLogger("implicit")
+handler = logging.StreamHandler()
+handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+log.addHandler(handler)
 
 
 class AlternatingLeastSquares(MatrixFactorizationBase):
