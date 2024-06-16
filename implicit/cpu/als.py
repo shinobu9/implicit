@@ -53,6 +53,8 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
     random_state : int, numpy.random.RandomState, np.random.Generator or None, optional
         The random state for seeding the initial item and user factors.
         Default is None.
+    gamma : float, optional
+        The gamma hyperparameter to scale the embedding size
 
     Attributes
     ----------
@@ -74,6 +76,7 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         calculate_training_loss=True,
         num_threads=0,
         random_state=None,
+        gamma=0.2,
     ):
         super().__init__(num_threads=num_threads)
 
@@ -81,6 +84,7 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         self.factors = factors
         self.regularization = regularization
         self.alpha = alpha
+        self.gamma = gamma
 
         # options on how to fit the model
         self.dtype = np.dtype(dtype)
@@ -96,6 +100,11 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         self._YtY = None
         # cache for user factors squared
         self._XtX = None
+
+        # user adaptive embedding parameters
+        self._du = None
+        # item adaptive embedding parameters
+        self._di = None
 
         check_blas_config()
 
@@ -151,6 +160,31 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
             self.item_factors = random_state.random((items, self.factors), dtype=self.dtype) * 0.01
 
         log.debug("Initialized factors in %s", time.time() - s)
+
+
+        print(users, items)
+        # Separate by popularity bins
+        user_interactions = Ciu.getnnz(axis=0)
+        print(user_interactions)
+        item_interactions = Ciu.getnnz(axis=1)
+        print(item_interactions)
+        fu_med = np.median(user_interactions)
+        fi_med = np.median(item_interactions)
+        d_u = np.round(user_interactions / (self.gamma * fu_med)).astype(np.int32)
+        d_i = np.round(item_interactions / (self.gamma * fi_med)).astype(np.int32)
+
+        for u in range(users):
+            if d_u[u] < self.factors:
+                if d_u[u] == 0: d_u[u] = 1
+                self.user_factors[u,d_u[u]:] = 0.0
+
+        for i in range(items):
+            if d_i[i] < self.factors:
+                if d_i[i] == 0: d_i[i] = 1
+                self.item_factors[i,d_i[i]:] = 0.0
+        
+        print(self.user_factors)
+        print(self.item_factors)
 
         # invalidate cached norms and squared factors
         self._item_norms = self._user_norms = None

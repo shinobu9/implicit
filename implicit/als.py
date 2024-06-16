@@ -16,6 +16,7 @@ def AlternatingLeastSquares(
     calculate_training_loss=False,
     num_threads=0,
     random_state=None,
+    gamma=0.2,
 ):
     """Alternating Least Squares
 
@@ -65,6 +66,7 @@ def AlternatingLeastSquares(
             iterations=iterations,
             calculate_training_loss=calculate_training_loss,
             random_state=random_state,
+            gamma=gamma,
         )
     return implicit.cpu.als.AlternatingLeastSquares(
         factors,
