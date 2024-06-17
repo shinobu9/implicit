@@ -16,7 +16,7 @@ def AlternatingLeastSquares(
     calculate_training_loss=False,
     num_threads=0,
     random_state=None,
-    gamma=0.2,
+    use_projections=False,
 ):
     """Alternating Least Squares
 
@@ -78,4 +78,5 @@ def AlternatingLeastSquares(
         calculate_training_loss,
         num_threads,
         random_state,
+        use_projections,
     )

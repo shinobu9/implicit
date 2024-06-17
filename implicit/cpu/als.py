@@ -74,6 +74,7 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         calculate_training_loss=True,
         num_threads=0,
         random_state=None,
+        use_projections=False,
     ):
         super().__init__(num_threads=num_threads)
 
@@ -91,6 +92,7 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         self.fit_callback = None
         self.cg_steps = 3
         self.random_state = random_state
+        self.use_projections = use_projections
 
 
         # cache for item factors squared
@@ -108,7 +110,8 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
 
         check_blas_config()
 
-    def fit(self, user_items, show_progress=True, callback=None, gamma=0.2, xavier_init=None, zero_padding=True, min_embedding=1, projections=True):
+    def fit(self, user_items, show_progress=True, callback=None, xavier_init=None, 
+            zero_padding=False, projections=False, gamma=0.02, min_embedding=2, beta=1.):
         """Factorizes the user_items matrix.
 
         After calling this method, the members 'user_factors' and 'item_factors' will be
@@ -134,17 +137,19 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
             Whether to show a progress bar during fitting
         callback: Callable, optional
             Callable function on each epoch with such arguments as epoch, elapsed time and progress
-        gamma : float, optional
-            The hyperparameter to scale the embedding size
         xavier_init: string, optional
             Type of matrix initialization to use. If set to None uses default random initialization,
             other options are "normal" and "uniform"
         zero_padding: bool, optional
             Whether to pad adaptive embeddings with zeroes
-        min_embedding: int, optional
-            Minimal embedding size when training with adaptive embeddings
         projections: bool, optional
             Whether to project adaptive embeddings onto common space
+        gamma : float, optional
+            The hyperparameter to scale the embedding size.
+            Only used when zero_padding or projections is True
+        min_embedding: int, optional
+            Minimal embedding size when training with adaptive embeddings.
+            Only used when zero_padding or projections is True
         """
         # initialize the random state
         random_state = check_random_state(self.random_state)
@@ -186,7 +191,8 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         log.debug("Initialized factors in %s", time.time() - s)
 
 # --------------------------------------------------------------------------------------------------
-        if zero_padding:
+        if zero_padding or projections:
+            s = time.time()
             user_interactions = Ciu.getnnz(axis=0)
             item_interactions = Ciu.getnnz(axis=1)
             fu_med = np.median(user_interactions)
@@ -207,35 +213,44 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
                     self.item_factors[i,self._di[i]:] = 0.0
                 else:
                     self._di[i] = self.factors
-
+            print(f"Median user pop: {fu_med}, median item pop {fi_med}")
             print(f"Small user embedding after padding: {sum(self._du<self.factors)}/{len(self._du)}")
             print(f"Small item embedding after padding: {sum(self._di<self.factors)}/{len(self._di)}")
 
-            if projections:
-                self._A = []
-                self._B = []
-                if xavier_init == "uniform":
-                    for i in range(self.factors):
-                        scale = np.sqrt(6/(self.factors+i))
-                        A = random_state.uniform(low=-scale, high=scale, size=(self.factors, self.factors)).astype(self.dtype)
-                        A[:, i:] = 0
-                        self._A.append(A)
-                elif xavier_init == "normal":
-                    for i in range(self.factors):
-                        A = random_state.normal(loc=0, scale=np.sqrt(2/(self.factors+i)), size=(self.factors, self.factors, self.factors)).astype(self.dtype)
-                        A[:, i:] = 0
-                        self._A.append(A)
-                elif xavier_init is None:
-                    for i in range(self.factors):
-                        A = random_state.random((self.factors, self.factors), dtype=self.dtype) * 0.01
-                        A[:, i:] = 0
-                        self._A.append(A)
-                self._A.append(np.eye(self.factors, self.factors))
-                self._A = np.array(self._A)
-                self._B = self._A.copy()
+            log.debug("Initialized embedding sizes in %s", time.time() - s)
 
-        self._Xhat = self.user_factors.copy()
-        self._Yhat = self.item_factors.copy()
+
+        if projections:
+            s = time.time()
+            self._A = []
+            self._B = []
+            if xavier_init == "uniform":
+                for i in range(self.factors):
+                    scale = np.sqrt(6/(self.factors+i))
+                    A = random_state.uniform(low=-scale, high=scale, size=(self.factors, self.factors)).astype(self.dtype)
+                    A[:, i:] = 0
+                    self._A.append(A)
+            elif xavier_init == "normal":
+                for i in range(self.factors):
+                    A = random_state.normal(loc=0, scale=np.sqrt(2/(self.factors+i)), size=(self.factors, self.factors, self.factors)).astype(self.dtype)
+                    A[:, i:] = 0
+                    self._A.append(A)
+            elif xavier_init is None:
+                for i in range(self.factors):
+                    A = random_state.random((self.factors, self.factors), dtype=self.dtype) * 0.01
+                    A[:, i:] = 0
+                    self._A.append(A)
+            self._A.append(np.eye(self.factors, self.factors))
+            self._A = np.array(self._A)
+            self._B = self._A.copy()
+
+            self._Xhat = self.user_factors.copy()
+            self._Yhat = self.item_factors.copy()
+
+            log.debug("Initialized projection matrices in %s", time.time() - s)
+
+        print(f"\nUser factors BEFORE \n{self.user_factors}\nItem factors BEFORE \n{self.item_factors}\n")
+        print(f"\nAp BEFORE \n{self._A}\nBp BEFORE \n{self._B}\n")
         
 # --------------------------------------------------------------------------------------------------
         # invalidate cached norms and squared factors
@@ -256,12 +271,12 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
                     AduXu(self._B, self.item_factors, self._Yhat, self._di)
                     # 2. Compute all Ap
                     for p in range(1,self.factors):
-                        update_Ap(self._A, p, self._du, self.user_factors, self._Yhat, Cui, self.regularization, self.alpha)
+                        update_Ap(self._A, p, self._du, self.user_factors, self._Yhat, Cui, beta, self.alpha)
                     # 3. Compute all x_hat_u
                     AduXu(self._A, self.user_factors, self._Xhat, self._du)
                     # 4. Compute all Bp
                     for p in range(1,self.factors):
-                        update_Ap(self._B, p, self._di, self.item_factors, self._Xhat, Ciu, self.regularization, self.alpha)
+                        update_Ap(self._B, p, self._di, self.item_factors, self._Xhat, Ciu, beta, self.alpha)
                     # 5. Compute all y_hat_i
                     AduXu(self._B, self.item_factors, self._Yhat, self._di)
                     # 6. Compute all x_u
@@ -270,8 +285,11 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
                         self.user_factors,
                         self._Yhat,
                         self.regularization,
+                        self._A,
+                        self._du,
                         num_threads=self.num_threads,
                     )
+                    # pad_with_zeroes(self.user_factors, self._du, self.factors, min_embedding)
                     # 7. Compute all x_hat_u
                     AduXu(self._A, self.user_factors, self._Xhat, self._du)
                     # 8. Compute all y_i
@@ -280,8 +298,13 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
                         self.item_factors,
                         self._Xhat,
                         self.regularization,
+                        self._B,
+                        self._di,                        
                         num_threads=self.num_threads,
                     )
+                    # pad_with_zeroes(self.item_factors, self._di, self.factors, min_embedding)
+                    print(f"\nITERATION {iteration}\nUser factors \n{self.user_factors}\nItem factors \n{self.item_factors}\n")
+
                 else:
                     solver(
                         Cui,
@@ -327,6 +350,7 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
             log.info("Final training loss %.4f", loss)
 
         self._check_fit_errors()
+        print(f"\nAp AFTER \n{self._A}\nBp AFTER \n{self._B}\n")
 
 
     def recalculate_user(self, userid, user_items):
@@ -545,10 +569,18 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
 
     @property
     def solver(self):
-        if self.use_cg:
-            solver = _als.least_squares_cg if self.use_native else least_squares_cg
-            return functools.partial(solver, cg_steps=self.cg_steps)
-        return _als.least_squares if self.use_native else least_squares
+        if self.use_projections:
+            if self.use_cg:
+                solver = _als.least_squares_cg_proj if self.use_native else least_squares_cg_proj
+                return functools.partial(solver, cg_steps=self.cg_steps)
+            else:
+                return _als.least_squares_proj if self.use_native else least_squares_proj
+        else:
+            if self.use_cg:
+                solver = _als.least_squares_cg if self.use_native else least_squares_cg
+                return functools.partial(solver, cg_steps=self.cg_steps)
+            else:
+                return _als.least_squares if self.use_native else least_squares
 
     @property
     def YtY(self):
@@ -626,29 +658,27 @@ def update_Ap(A, p, d_u, X, Yhat, Cui, beta, alpha):
     I = np.eye(d*d, d*d).astype(np.float32)*beta
     Qtr = np.zeros((d*d)).astype(np.float32)
 
-    s = time.time()
-    with tqdm(total=users) as progress:
-        for u in range(users):
-            if d_u[u] != p:
+    # s = time.time()
+    for u in range(users):
+        if d_u[u] != p:
+            continue
+        for i, confidence in nonzeros(Cui, u):
+            if confidence == 0:
                 continue
-            for i, confidence in nonzeros(Cui, u):
-                if confidence == 0:
-                    continue
-                Qp = np.outer(Yhat[i], X[u]).flatten().astype(np.float32)
-                assert Qp.shape[0] == d*d, "Qp shape does not equal (d*d,)"
+            Qp = np.outer(Yhat[i], X[u]).flatten().astype(np.float32)
+            assert Qp.shape[0] == d*d, "Qp shape does not equal (d*d,)"
 
-                QtQ += np.outer(Qp,Qp).astype(np.float32)
-                assert QtQ.shape == (d*d, d*d), "QtQ shape does not equal (d*d, d*d)"
+            QtQ += np.outer(Qp,Qp).astype(np.float32)
+            assert QtQ.shape == (d*d, d*d), "QtQ shape does not equal (d*d, d*d)"
 
-                Qtr += confidence / alpha * Qp
-                assert Qtr.shape[0] == d*d, "Qtr shape does not equal (d*d,)"
+            Qtr += confidence / alpha * Qp
+            assert Qtr.shape[0] == d*d, "Qtr shape does not equal (d*d,)"
 
-            progress.update(1)
-    log.debug("Calculated Qp in %.3fs", time.time() - s)
+    # log.debug("Calculated Qp in %.3fs", time.time() - s)
     
-    s = time.time()
+    # s = time.time()
     QtQreg_inv = np.linalg.inv(QtQ + I)
-    log.debug("Calculated inverse in %.3fs", time.time() - s)
+    # log.debug("Calculated inverse in %.3fs", time.time() - s)
     A[p] = QtQreg_inv.dot(Qtr).reshape(d,d)
 
 def least_squares(Cui, X, Y, regularization, num_threads=0):
@@ -663,6 +693,21 @@ def least_squares(Cui, X, Y, regularization, num_threads=0):
 
     for u in range(users):
         X[u] = user_factor(Y, YtY, Cui, u, regularization, n_factors)
+        # ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+def least_squares_proj(Cui, X, Y, regularization, A, d_u, num_threads=0):
+    """For each user in Cui, calculate factors Xu for them
+    using least squares on Y.
+
+    Note: this is at least 10 times slower than the cython version included
+    here.
+    """
+    users, n_factors = X.shape
+
+    for u in range(users):
+        Ywave = Y.dot(A[d_u[u]])
+        YtY = Ywave.T.dot(Ywave)
+        X[u] = user_factor(Y, A[d_u[u]].T.dot(YtY), Cui, u, regularization, n_factors)
         # ------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
@@ -730,6 +775,50 @@ def least_squares_cg(Cui, X, Y, regularization, num_threads=0, cg_steps=3):
                     confidence *= -1
 
                 Ap += (confidence - 1) * Y[i].dot(p) * Y[i]
+
+            # standard CG update
+            alpha = rsold / p.dot(Ap)
+            x += alpha * p
+            r -= alpha * Ap
+            rsnew = r.dot(r)
+            if rsnew < 1e-20:
+                break
+            p = r + (rsnew / rsold) * p
+            rsold = rsnew
+
+        X[u] = x
+
+def least_squares_cg_proj(Cui, X, Y, regularization, A, d_u, num_threads=0, cg_steps=3):
+    users, factors = X.shape
+
+    for u in range(users):
+        # start from previous iteration
+        x = X[u]
+        Ywave = Y.dot(A[d_u[u]])
+        YtY = Ywave.T.dot(Ywave) + regularization * np.eye(factors, dtype=Ywave.dtype)
+
+        # calculate residual error r = (YtCuPu - (YtCuY.dot(Xu)
+        r = -YtY.dot(x)
+        for i, confidence in nonzeros(Cui, u):
+            if confidence > 0:
+                r += (confidence - (confidence - 1) * Ywave[i].dot(x)) * Ywave[i]
+            else:
+                confidence *= -1
+                r += -(confidence - 1) * Ywave[i].dot(x) * Ywave[i]
+
+        p = r.copy()
+        rsold = r.dot(r)
+        if rsold < 1e-20:
+            continue
+
+        for _ in range(cg_steps):
+            # calculate Ap = YtCuYp - without actually calculating YtCuY
+            Ap = YtY.dot(p)
+            for i, confidence in nonzeros(Cui, u):
+                if confidence < 0:
+                    confidence *= -1
+
+                Ap += (confidence - 1) * Ywave[i].dot(p) * Ywave[i]
 
             # standard CG update
             alpha = rsold / p.dot(Ap)

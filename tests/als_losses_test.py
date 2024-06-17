@@ -34,7 +34,7 @@ if HAS_CUDA:
 
 def test_calculate_loss_simple(use_gpu):
 
-    generate_dataset(variant="100k", num_test_ratings=10, eval_percent=0.1, min_rating=4.0, path="/home/kamenskaya-el/adaptive-als/", outputpath="~/adaptive-als/implicit_datasets/")
+    # generate_dataset(variant="100k", num_test_ratings=10, eval_percent=0.1, min_rating=4.0, path="/home/kamenskaya-el/adaptive-als/", outputpath="~/adaptive-als/implicit_datasets/")
     titles, ratings = get_movielens(variant="100k", split="train")
     # ratings.data[ratings.data <= 2.0] = 0
     # ratings.data[ratings.data >= 4.0] = 1
@@ -44,22 +44,37 @@ def test_calculate_loss_simple(use_gpu):
     user_ratings = ratings.T.tocsr()
 
     model = AlternatingLeastSquares(
-        factors=50,
+        factors=6,
         regularization=0.1,
-        iterations=30,
+        iterations=5,
         dtype=np.float32,
         random_state=23,
-        use_native=True,
+        use_native=False, #ONLY with zeroes and vanilla
         use_cg=True,
         use_gpu=use_gpu,
         calculate_training_loss=True,
         alpha=40,
+        use_projections=True
     )
 
-    model.fit(user_ratings, show_progress=True,  xavier_init="uniform", gamma=0.02, zero_padding=True, min_embedding=2)
+    # counts = csr_matrix(
+    #     [
+    #         [1, 1, 1, -1, 1, 0],
+    #         [-1, 1, 0, 1, 0, 1],
+    #         [-1, 0, 1, 1, 0, -1],
+    #         [0, 1, 1, 1, 0, 0],
+    #         [0, 0, 0, 1, 0, 0],
+    #         [0, 0, 0, 0, -1, 0],
+    #         [0, 1, 1, 1, 0, 0],
+    #     ],
+    #     dtype=np.float32,
+    # )
+    # user_ratings = counts.T.tocsr()
+
+    model.fit(user_ratings, show_progress=True,  xavier_init="uniform", zero_padding=False, projections=True, gamma=0.2, min_embedding=2, beta=1)
 
     item_factors, user_factors = model.item_factors, model.user_factors
-    print(f"Ratings {user_ratings.shape} | User factors {user_factors.shape} | Item factors {item_factors.shape}")
+    print(f"\nRatings\n{user_ratings.shape}\nUser factors\n{user_factors}\nItem factors\n{item_factors}\n")
 
     _, ratings = get_movielens(variant="100k", split="test")
     # ratings.data[ratings.data <= 2.0] = 0
@@ -69,16 +84,7 @@ def test_calculate_loss_simple(use_gpu):
     # ratings.data = np.ones(len(ratings.data))
     user_ratings_test = ratings.T.tocsr()
 
-    # counts = csr_matrix(
-    #     [
-    #         [4, 1, 0, 2, 5, 3],
-    #         [2, 0, 3, 0, 1, 0],
-    #         [1, 0, 4, 0, 3, 2],
-    #         [0, 5, 0, 4, 0, 5],
-    #     ],
-    #     dtype=np.float32,
-    # )
-    # user_ratings_test = counts.T.tocsr()
+
 
     # print(f"AUC: {implicit.cpu._als.calculate_auc_loss(user_ratings_test, user_factors, item_factors)}")
     print(f"RMSE: {implicit.cpu._als.calculate_rmse_loss(user_ratings_test, user_factors, item_factors)}")
