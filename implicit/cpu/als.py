@@ -5,9 +5,11 @@ import logging
 import time
 
 import numpy as np
+import pandas as pd
 import scipy
 import scipy.sparse
 from tqdm.auto import tqdm
+import matplotlib.pyplot as plt
 
 from ..utils import check_blas_config, check_csr, check_random_state, nonzeros
 from . import _als
@@ -111,7 +113,8 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         check_blas_config()
 
     def fit(self, user_items, show_progress=True, callback=None, xavier_init=None, 
-            zero_padding=False, projections=False, gamma=0.02, min_embedding=2, beta=1.):
+            zero_padding=False, projections=False, gamma=0.02, min_embedding=2, beta=1.,
+            loss_csv="loss.csv", loss_png="loss.png"):
         """Factorizes the user_items matrix.
 
         After calling this method, the members 'user_factors' and 'item_factors' will be
@@ -153,6 +156,8 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         """
         # initialize the random state
         random_state = check_random_state(self.random_state)
+
+        self.losses = []
 
         Cui = check_csr(user_items)
         if Cui.dtype != np.float32:
@@ -249,8 +254,8 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
 
             log.debug("Initialized projection matrices in %s", time.time() - s)
 
-        print(f"\nUser factors BEFORE \n{self.user_factors}\nItem factors BEFORE \n{self.item_factors}\n")
-        print(f"\nAp BEFORE \n{self._A}\nBp BEFORE \n{self._B}\n")
+        # print(f"\nUser factors BEFORE \n{self.user_factors}\nItem factors BEFORE \n{self.item_factors}\n")
+        # print(f"\nAp BEFORE \n{self._A}\nBp BEFORE \n{self._B}\n")
         
 # --------------------------------------------------------------------------------------------------
         # invalidate cached norms and squared factors
@@ -303,7 +308,7 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
                         num_threads=self.num_threads,
                     )
                     # pad_with_zeroes(self.item_factors, self._di, self.factors, min_embedding)
-                    print(f"\nITERATION {iteration}\nUser factors \n{self.user_factors}\nItem factors \n{self.item_factors}\n")
+                    # print(f"\nITERATION {iteration}\nUser factors \n{self.user_factors}\nItem factors \n{self.item_factors}\n")
 
                 else:
                     solver(
@@ -339,6 +344,7 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
                     if not show_progress:
                         log.info("loss %.4f", loss)
                     print(f"loss : {loss}")
+                    self.losses.append(loss)
 
                 # Backward compatibility
                 if not callback:
@@ -350,7 +356,23 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
             log.info("Final training loss %.4f", loss)
 
         self._check_fit_errors()
-        print(f"\nAp AFTER \n{self._A}\nBp AFTER \n{self._B}\n")
+        self.save_losses_to_csv(self.losses, loss_csv)
+        self.plot_losses(self.losses, loss_png)
+        # print(f"\nAp AFTER \n{self._A}\nBp AFTER \n{self._B}\n")
+
+    def save_losses_to_csv(self, losses, output_file):
+        df = pd.DataFrame({'Iteration': range(1, len(losses) + 1), 'Loss': losses})
+        df.to_csv(output_file, index=False)
+
+    def plot_losses(self, losses, output_image):
+        df = pd.DataFrame({'Iteration': range(1, len(losses) + 1), 'Loss': losses})
+        plt.figure(figsize=(8, 6))
+        plt.plot(df['Iteration'], df['Loss'], marker='o', color='b', linestyle='-', linewidth=2)
+        plt.xlabel('Iteration')
+        plt.ylabel('Loss')
+        # plt.title('Loss per Iteration')
+        plt.grid(True)
+        plt.savefig(output_image)
 
 
     def recalculate_user(self, userid, user_items):

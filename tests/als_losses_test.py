@@ -33,9 +33,11 @@ if HAS_CUDA:
 
 
 def test_calculate_loss_simple(use_gpu):
-
-    # generate_dataset(variant="100k", num_test_ratings=10, eval_percent=0.1, min_rating=4.0, path="/home/kamenskaya-el/adaptive-als/", outputpath="~/adaptive-als/implicit_datasets/")
-    titles, ratings = get_movielens(variant="100k", split="train")
+    variant = "100k"
+    generate_dataset(variant=variant, num_test_ratings=10, eval_percent=0.1, min_rating=4.0, 
+                     path="/home/kamenskaya-el/adaptive-als/", 
+                     outputpath="~/adaptive-als/implicit_datasets/")
+    titles, ratings = get_movielens(variant=variant, split="train")
     # ratings.data[ratings.data <= 2.0] = 0
     # ratings.data[ratings.data >= 4.0] = 1
     # ratings.data[(ratings.data < 4.0)&(ratings.data > 2.0)] = 0
@@ -71,20 +73,27 @@ def test_calculate_loss_simple(use_gpu):
     # )
     # user_ratings = counts.T.tocsr()
 
-    model.fit(user_ratings, show_progress=True,  xavier_init="uniform", zero_padding=False, projections=True, gamma=0.2, min_embedding=2, beta=1)
+    projections = False
+    zero_padding = False
+
+    setup = "proj"
+    if setup == "zero":
+        zero_padding = True
+    elif setup == "proj":
+        projections = True
+
+    name = f"{variant}-{setup}"
+
+    model.fit(user_ratings, show_progress=True,  xavier_init="uniform", 
+              zero_padding=zero_padding, projections=projections, gamma=0.2, min_embedding=2, beta=1,
+              loss_csv="/home/kamenskaya-el/adaptive-als/implicit/111losses/{name}.csv", 
+              loss_png=f"/home/kamenskaya-el/adaptive-als/implicit/111plots/{name}.png")
 
     item_factors, user_factors = model.item_factors, model.user_factors
-    print(f"\nRatings\n{user_ratings.shape}\nUser factors\n{user_factors}\nItem factors\n{item_factors}\n")
 
     _, ratings = get_movielens(variant="100k", split="test")
-    # ratings.data[ratings.data <= 2.0] = 0
-    # ratings.data[ratings.data >= 4.0] = 1
-    # ratings.data[(ratings.data < 4.0)&(ratings.data > 2.0)] = 0
     ratings.eliminate_zeros()
-    # ratings.data = np.ones(len(ratings.data))
     user_ratings_test = ratings.T.tocsr()
-
-
 
     # print(f"AUC: {implicit.cpu._als.calculate_auc_loss(user_ratings_test, user_factors, item_factors)}")
     print(f"RMSE: {implicit.cpu._als.calculate_rmse_loss(user_ratings_test, user_factors, item_factors)}")
