@@ -103,6 +103,8 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         self._di = None
         self._A = None
         self._B = None
+        self._Xhat = None
+        self._Yhat = None
 
         check_blas_config()
 
@@ -232,7 +234,8 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
                 self._A = np.array(self._A)
                 self._B = self._A.copy()
 
-
+        self._Xhat = self.user_factors.copy()
+        self._Yhat = self.item_factors.copy()
         
 # --------------------------------------------------------------------------------------------------
         # invalidate cached norms and squared factors
@@ -248,25 +251,57 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
             # alternate between learning the user_factors from the item_factors and vice-versa
             for iteration in range(self.iterations):
                 s = time.time()
-                solver(
-                    Cui,
-                    self.user_factors,
-                    self.item_factors,
-                    self.regularization,
-                    num_threads=self.num_threads,
-                )
-                if zero_padding:
-                    pad_with_zeroes(self.user_factors, self._du, self.factors, min_embedding)
-                solver(
-                    Ciu,
-                    self.item_factors,
-                    self.user_factors,
-                    self.regularization,
-                    num_threads=self.num_threads,
-                )
-                if zero_padding:
-                    pad_with_zeroes(self.item_factors, self._di, self.factors, min_embedding)
-                progress.update(1)
+                if projections:
+                    # 1. Compute all y_hat_i
+                    AduXu(self._B, self.item_factors, self._Yhat, self._di)
+                    # 2. Compute all Ap
+                    for p in range(1,self.factors):
+                        update_Ap(self._A, p, self._du, self.user_factors, self._Yhat, Cui, self.regularization, self.alpha)
+                    # 3. Compute all x_hat_u
+                    AduXu(self._A, self.user_factors, self._Xhat, self._du)
+                    # 4. Compute all Bp
+                    for p in range(1,self.factors):
+                        update_Ap(self._B, p, self._di, self.item_factors, self._Xhat, Ciu, self.regularization, self.alpha)
+                    # 5. Compute all y_hat_i
+                    AduXu(self._B, self.item_factors, self._Yhat, self._di)
+                    # 6. Compute all x_u
+                    solver(
+                        Cui,
+                        self.user_factors,
+                        self._Yhat,
+                        self.regularization,
+                        num_threads=self.num_threads,
+                    )
+                    # 7. Compute all x_hat_u
+                    AduXu(self._A, self.user_factors, self._Xhat, self._du)
+                    # 8. Compute all y_i
+                    solver(
+                        Ciu,
+                        self.item_factors,
+                        self._Xhat,
+                        self.regularization,
+                        num_threads=self.num_threads,
+                    )
+                else:
+                    solver(
+                        Cui,
+                        self.user_factors,
+                        self.item_factors,
+                        self.regularization,
+                        num_threads=self.num_threads,
+                    )
+                    if zero_padding:
+                        pad_with_zeroes(self.user_factors, self._du, self.factors, min_embedding)
+                    solver(
+                        Ciu,
+                        self.item_factors,
+                        self.user_factors,
+                        self.regularization,
+                        num_threads=self.num_threads,
+                    )
+                    if zero_padding:
+                        pad_with_zeroes(self.item_factors, self._di, self.factors, min_embedding)
+                    progress.update(1)
 
                 if self.calculate_training_loss:
                     loss = _als.calculate_loss(
@@ -574,9 +609,47 @@ def pad_with_zeroes(X, d_u, d, min_d):
     for u in range(X.shape[0]):
         X[u, d_u[u]:] = 0.0
 
-def pad_with_zeroes_matrix(_A):
-    for u in range(_A.shape[0]):
-        _A[u, :, u:] = 0
+def pad_with_zeroes_matrix(A):
+    for u in range(A.shape[0]):
+        A[u, :, u:] = 0
+
+def AduXu(A, X, Xhat, d_u):
+    for u in range(X.shape[0]):
+        Xhat[u] = A[d_u[u]].dot(X[u])
+
+def update_Ap(A, p, d_u, X, Yhat, Cui, beta, alpha):
+    # Xu = (YtCuY + regularization * I)^-1 (YtCuPu)
+    # YtCuY + regularization * I = YtY + regularization * I + Yt(Cu-I)
+    users, _ = Cui.shape
+    d = X.shape[1]
+    QtQ = np.zeros((d*d, d*d)).astype(np.float32)
+    I = np.eye(d*d, d*d).astype(np.float32)*beta
+    Qtr = np.zeros((d*d)).astype(np.float32)
+
+    s = time.time()
+    with tqdm(total=users) as progress:
+        for u in range(users):
+            if d_u[u] != p:
+                continue
+            for i, confidence in nonzeros(Cui, u):
+                if confidence == 0:
+                    continue
+                Qp = np.outer(Yhat[i], X[u]).flatten().astype(np.float32)
+                assert Qp.shape[0] == d*d, "Qp shape does not equal (d*d,)"
+
+                QtQ += np.outer(Qp,Qp).astype(np.float32)
+                assert QtQ.shape == (d*d, d*d), "QtQ shape does not equal (d*d, d*d)"
+
+                Qtr += confidence / alpha * Qp
+                assert Qtr.shape[0] == d*d, "Qtr shape does not equal (d*d,)"
+
+            progress.update(1)
+    log.debug("Calculated Qp in %.3fs", time.time() - s)
+    
+    s = time.time()
+    QtQreg_inv = np.linalg.inv(QtQ + I)
+    log.debug("Calculated inverse in %.3fs", time.time() - s)
+    A[p] = QtQreg_inv.dot(Qtr).reshape(d,d)
 
 def least_squares(Cui, X, Y, regularization, num_threads=0):
     """For each user in Cui, calculate factors Xu for them
